@@ -18,6 +18,7 @@ from .logic import (data_agent, envelope, final_decision, mean_reversion_agent,
                     news_agent, order_flow_agent, risk_agent, trend_agent,
                     volatility_agent)
 from .store import Store
+from .web import DashboardRuntime, serve as serve_dashboard
 
 log = logging.getLogger("okxpaper")
 
@@ -120,6 +121,7 @@ class Runner:
         self.fast_halt = "FAST_NOT_READY" if cfg.enabled else None
         self.fast_last = 0.0
         self.fast_errors = 0
+        self.eligible_count = 0
 
     def refresh_universe(self):
         if time.monotonic() - self.last_discovery > 3600 or not self.instruments:
@@ -312,6 +314,7 @@ class Runner:
                          float(tickers[s].get("volCcy24h") or 0) * float(tickers[s].get("last") or 0) >= self.cfg.min_volume)
         if not symbols:
             raise OkxError("No liquid USDT perpetual instruments found")
+        self.eligible_count = len(symbols)
         batch = [symbols[(self.cursor+i) % len(symbols)] for i in range(min(self.cfg.max_symbols, len(symbols)))]
         self.cursor = (self.cursor + len(batch)) % len(symbols)
         self.store.audit("cycle_start", {"universe": len(self.instruments), "eligible": len(symbols),
@@ -379,10 +382,53 @@ class Runner:
         self.api_errors = max(0, self.api_errors - 1)
 
 
+def dashboard_worker(runtime):
+    """Keep the web UI responsive even while OKX or bot setup is unavailable."""
+    try:
+        cfg = Config()
+        cfg.check()
+        runtime.update(bot_enabled=cfg.enabled, test_days=cfg.test_days)
+        api = client()
+        if not all((api.key, api.secret, api.passphrase)):
+            runtime.update(state="setup", message="Railway Variables içine OKX demo API anahtarlarını ekleyin.")
+            return
+        volume_path = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "")
+        persistent = os.path.ismount(Path(cfg.db).parent) or volume_path == str(Path(cfg.db).parent)
+        if cfg.enabled and os.name != "nt" and not persistent:
+            runtime.update(state="setup", message="Demo emirleri için BOT_DB klasörüne Railway volume bağlayın.")
+            return
+        store = Store(cfg.db)
+        runtime.store = store
+        runner = Runner(cfg, api, store)
+        runtime.update(state="starting", message="OKX demo bağlantısı kontrol ediliyor.", test_start=runner.test_start)
+        if cfg.enabled:
+            threading.Thread(target=runner.fast_loop, daemon=True).start()
+        while True:
+            started = time.monotonic()
+            try:
+                runner.cycle()
+                runtime.update(state="running" if cfg.enabled else "observe",
+                               message="OKX demo taraması çalışıyor." if cfg.enabled else "İzleme açık; BOT_ENABLED=false olduğu için emirler kapalı.",
+                               last_cycle=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                               eligible_count=runner.eligible_count,
+                               fast_halt=runner.fast_halt,
+                               wfa_in_progress="Çalışıyor" if runner.validation_thread and runner.validation_thread.is_alive() else "Beklemede")
+            except Exception as exc:
+                runner.api_errors += 1
+                store.audit("cycle_error", {"error": str(exc)})
+                runtime.update(state="error", message=f"Bot döngüsü: {str(exc)[:180]}", fast_halt=runner.fast_halt)
+                log.exception("Dashboard worker cycle failed")
+            time.sleep(max(1, cfg.interval - (time.monotonic() - started)))
+    except Exception as exc:
+        runtime.update(state="setup", message=f"Kurulum hatası: {str(exc)[:180]}")
+        log.exception("Dashboard worker setup failed")
+
+
 def main():
     parser = argparse.ArgumentParser(description="OKX demo-only USDT perpetual bot")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("run")
+    sub.add_parser("serve", help="Railway web dashboard and background demo bot")
     bt = sub.add_parser("backtest")
     bt.add_argument("symbol")
     all_bt = sub.add_parser("backtest-all")
@@ -395,6 +441,11 @@ def main():
     sub.add_parser("list-instruments")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    if args.command == "serve":
+        runtime = DashboardRuntime()
+        threading.Thread(target=dashboard_worker, args=(runtime,), daemon=True).start()
+        serve_dashboard(runtime, int(os.getenv("PORT", "8080")))
+        return
     cfg = Config()
     cfg.check()
     api = client()

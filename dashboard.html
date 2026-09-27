@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>OKX Paper Lab</title>
+  <link rel="stylesheet" href="/assets/dashboard.css">
+  <script src="/assets/dashboard.js" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-icon">↗</span><span><b>PAPER LAB</b><small>OKX Demo Console</small></span></div>
+      <div class="nav-label">GENEL BAKIŞ</div>
+      <nav aria-label="Sayfa bölümleri">
+        <a class="nav-link active" href="#overview"><span>◫</span> Gösterge paneli</a>
+        <a class="nav-link" href="#decisions"><span>◎</span> Karar akışı</a>
+        <a class="nav-link" href="#universe"><span>▦</span> Pariteler</a>
+        <a class="nav-link" href="#execution"><span>⇄</span> Emir kayıtları</a>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="sidebar-note"><div class="live-dot"></div><span>Yalnızca demo işlemleri<br><small>Salt okunur kontrol paneli</small></span></div>
+        <form action="/logout" method="post"><button class="logout" type="submit">Oturumu kapat <span>↗</span></button></form>
+      </div>
+    </aside>
+    <main class="main-content" id="overview">
+      <header class="topbar">
+        <div class="breadcrumb">Çalışma alanı <span>/</span> OKX Demo <span>/</span> Genel bakış</div>
+        <div class="top-right"><span class="demo-pill">● DEMO ONLY</span><span id="server-time">—</span></div>
+      </header>
+      <section class="intro">
+        <div><div class="eyebrow">OTOMATİK STRATEJİ İZLEME</div><h1>Paper Trading<br><em>Komuta Merkezi</em></h1>
+          <p>USDT sürekli vadeli sözleşmeler için canlı durum, risk kapıları ve karar geçmişi.</p></div>
+        <div class="run-card"><div class="run-card-head"><span class="run-icon">◉</span><span id="engine-state" class="state-pill">BAŞLATILIYOR</span></div>
+          <h2>İşlem motoru</h2><p id="engine-message">Durum okunuyor…</p><div class="run-meta"><span>Son döngü</span><strong id="last-cycle">—</strong></div></div>
+      </section>
+      <section class="metric-grid" aria-label="Performans özeti">
+        <article class="metric-card"><div class="metric-head"><span>Demo özsermaye</span><span class="metric-symbol">◇</span></div><strong id="equity">—</strong><small id="equity-at">Son gözlem yok</small></article>
+        <article class="metric-card"><div class="metric-head"><span>Bugün</span><span class="metric-symbol">↗</span></div><strong id="day-return">—</strong><small>UTC gün başlangıcına göre</small></article>
+        <article class="metric-card"><div class="metric-head"><span>Test getirisi</span><span class="metric-symbol">◈</span></div><strong id="test-return">—</strong><small>İlk kayıtlı özsermayeye göre</small></article>
+        <article class="metric-card"><div class="metric-head"><span>Kapanan pozisyon</span><span class="metric-symbol">⇄</span></div><strong id="closed-count">—</strong><small id="realized-pnl">Gerçekleşen PnL: —</small></article>
+      </section>
+      <section class="chart-grid">
+        <article class="panel chart-panel"><div class="panel-head"><div><div class="eyebrow">PERFORMANS</div><h2>Özsermaye akışı</h2></div><span class="subtle">Son 100 gözlem</span></div>
+          <div class="chart-wrap"><svg id="equity-chart" viewBox="0 0 720 210" role="img" aria-label="Son özsermaye gözlemleri"><line x1="0" y1="170" x2="720" y2="170" class="chart-axis"/><polyline id="chart-line" points=""/></svg><div id="chart-empty" class="chart-empty">Veri toplandığında grafik burada görünecek.</div></div>
+          <div class="chart-foot"><span>İleri yönlü OKX demo verisi</span><span>30 günlük test</span></div></article>
+        <article class="panel risk-panel"><div class="panel-head"><div><div class="eyebrow">KORUMA</div><h2>Risk durumu</h2></div><span class="shield">◈</span></div>
+          <div id="risk-state" class="risk-state">Kontrol ediliyor</div><p id="risk-description">Hızlı koruma döngüsü bekleniyor.</p>
+          <div class="risk-separator"></div>
+          <div class="risk-row"><span>Emir gönderimi</span><strong id="trading-mode">—</strong></div>
+          <div class="risk-row"><span>Aktif WFA</span><strong id="wfa-state">—</strong></div>
+          <div class="risk-row"><span>Taranabilir parite</span><strong id="eligible-count">—</strong></div>
+          <div class="risk-row"><span>Test başlangıcı</span><strong id="test-start">—</strong></div>
+        </article>
+      </section>
+      <section class="panel table-panel" id="decisions"><div class="panel-head"><div><div class="eyebrow">KARAR MOTORU</div><h2>Son kararlar</h2></div><span class="subtle">Risk veto ve sinyal gerekçeleri</span></div>
+        <div class="table-scroll"><table><thead><tr><th>Zaman (UTC)</th><th>Parite</th><th>Karar</th><th>Güven</th><th>Gerekçe</th></tr></thead><tbody id="decision-rows"><tr><td colspan="5" class="empty-row">Henüz karar kaydı yok.</td></tr></tbody></table></div></section>
+      <section class="lower-grid">
+        <article class="panel" id="universe"><div class="panel-head"><div><div class="eyebrow">PİYASA EVRENİ</div><h2>USDT Perpetual <span id="universe-count" class="count-badge">0</span></h2></div></div>
+          <input id="symbol-search" class="search" type="search" placeholder="Parite ara, örn. BTC-USDT-SWAP" aria-label="Parite ara">
+          <div id="symbol-list" class="symbol-list"><div class="empty-row">Pariteler yükleniyor…</div></div></article>
+        <article class="panel" id="execution"><div class="panel-head"><div><div class="eyebrow">YÜRÜTME</div><h2>Emir kayıtları</h2></div></div>
+          <div id="order-list" class="order-list"><div class="empty-row">Henüz emir kaydı yok.</div></div></article>
+      </section>
+      <footer><span>OKX PAPER LAB · DEMO İZLEME</span><span>Arayüzden emir açılamaz. Kararlar borsanın demo API'siyle yürütülür.</span></footer>
+    </main>
+  </div>
+</body>
+</html>

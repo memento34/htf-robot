@@ -37,6 +37,7 @@ class Store:
                     id TEXT PRIMARY KEY, u_time_ms INTEGER NOT NULL, pnl_usd REAL NOT NULL,
                     hold_ms INTEGER, payload TEXT NOT NULL
                 );
+                CREATE INDEX IF NOT EXISTS audit_kind_id ON audit(kind,id);
             """)
 
     @contextmanager
@@ -143,6 +144,50 @@ class Store:
             return None
         return {"ts": row[0], "status": row[1], "weights": json.loads(row[2]), "report": json.loads(row[3])}
 
+    def dashboard_snapshot(self):
+        """Small read-only snapshot for the password-protected web console."""
+        day = datetime.now(timezone.utc).date().isoformat()
+        with self.connect() as db:
+            current = db.execute("SELECT ts,value FROM equity ORDER BY ts DESC LIMIT 1").fetchone()
+            start = db.execute("SELECT value FROM equity ORDER BY ts ASC LIMIT 1").fetchone()
+            baseline = db.execute("SELECT equity FROM baselines WHERE day=?", (day,)).fetchone()
+            curve = db.execute("SELECT ts,value FROM equity ORDER BY ts DESC LIMIT 100").fetchall()
+            decision_rows = db.execute("SELECT ts,payload FROM audit WHERE kind='decision' ORDER BY id DESC LIMIT 16").fetchall()
+            order_rows = db.execute("SELECT ts,kind,payload FROM audit WHERE kind IN ('order_result','order_error') ORDER BY id DESC LIMIT 12").fetchall()
+            universe_row = db.execute("SELECT payload FROM audit WHERE kind='universe' ORDER BY id DESC LIMIT 1").fetchone()
+            validations = db.execute("SELECT symbol,status,ts FROM validations ORDER BY ts DESC LIMIT 100").fetchall()
+            closed = db.execute("SELECT COUNT(*),COALESCE(SUM(pnl_usd),0) FROM closed_positions").fetchone()
+        current_value = current[1] if current else None
+        day_value = baseline[0] if baseline else None
+        start_value = start[0] if start else None
+        def pct(a, b):
+            return round(100*(a/b-1), 3) if a is not None and b and b > 0 else None
+        decisions = []
+        for ts, payload in decision_rows:
+            try:
+                row = json.loads(payload)
+                final = row.get("final", {})
+                decisions.append({"ts": ts, "symbol": row.get("symbol"), "decision": final.get("decision"),
+                                  "confidence": final.get("confidence_0_1"), "reason": final.get("rationale_summary")})
+            except (ValueError, TypeError):
+                continue
+        orders = []
+        for ts, kind, payload in order_rows:
+            try:
+                row = json.loads(payload)
+                orders.append({"ts": ts, "kind": kind, "signal_key": row.get("signal_key"),
+                               "status": row.get("status", "error"), "avg_fill_price": row.get("avg_fill_price")})
+            except (ValueError, TypeError):
+                continue
+        universe = json.loads(universe_row[0]) if universe_row else {"count": 0, "symbols": []}
+        return {"equity_usd": current_value, "equity_at": current[0] if current else None,
+                "day_return_pct": pct(current_value, day_value), "test_return_pct": pct(current_value, start_value),
+                "closed_positions": closed[0], "realized_pnl_usd": closed[1],
+                "equity_curve": [{"ts": ts, "value": value} for ts, value in reversed(curve)],
+                "decisions": decisions, "orders": orders,
+                "universe_count": universe.get("count", 0), "symbols": universe.get("symbols", []),
+                "validations": [{"symbol": s, "status": status, "ts": ts} for s, status, ts in validations]}
+
     def performance(self, days=30):
         from datetime import timedelta
         import math
@@ -164,8 +209,8 @@ class Store:
         daily = {}
         for ts, val in rows:
             daily[ts[:10]] = val
-        closes = list(daily.values())
-        changes = [closes[i]/closes[i-1]-1 for i in range(1,len(closes)) if closes[i-1] > 0]
+        daily_closes = list(daily.values())
+        changes = [daily_closes[i]/daily_closes[i-1]-1 for i in range(1,len(daily_closes)) if daily_closes[i-1] > 0]
         sharpe = statistics.mean(changes)/statistics.stdev(changes)*math.sqrt(365) if len(changes)>1 and statistics.stdev(changes) else None
         downside = [min(0,x) for x in changes]
         denominator = math.sqrt(sum(x*x for x in downside)/len(downside)) if downside else 0
