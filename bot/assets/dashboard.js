@@ -61,7 +61,9 @@ function renderDecisions(items) {
     pill.textContent = decision.toUpperCase();
     decisionCell.append(pill);row.append(decisionCell);
     row.append(td(item.confidence === null || item.confidence === undefined ? "—" : `${(Number(item.confidence)*100).toFixed(0)}%`));
-    row.append(td(item.reason));body.append(row);
+    const validation=String(item.validation_status||"");
+    const suffix=validation === "PENDING_PAPER" ? " · GEÇİCİ PAPER" : validation === "PENDING_BLOCKED" ? " · WFA BEKLENİYOR" : validation === "REJECTED" ? " · WFA RED" : validation === "QUICK_NO_EDGE" ? " · KISA TEST GEÇİLMEDİ" : "";
+    row.append(td(`${item.reason || "—"}${suffix}`));body.append(row);
   }
 }
 function renderSymbols(filter="") {
@@ -126,10 +128,14 @@ function render(data) {
   const halted=data.fast_halt || data.storage_error || state === "error" || state === "setup";
   risk.className=`risk-state ${halted ? "bad" : data.bot_enabled ? "" : "warn"}`;
   risk.textContent=halted ? "Yeni giriş durduruldu" : data.bot_enabled ? "Koruma aktif" : "İzleme modu";
-  $("risk-description").textContent=data.fast_halt || data.storage_error || (data.bot_enabled ? "Gerçek piyasa fiyatlarıyla sanal stop ve hedef 5 saniyede bir kontrol edilir." : "BOT_ENABLED=false. Yeni paper girişleri kapalı.");
+  $("risk-description").textContent=data.fast_halt || data.storage_error || (data.bot_enabled ? (data.allow_pending_wfa ? "WFA beklerken geçici paper sinyalleri açık. Risk ve sanal stop kontrolleri sürer." : "WFA onayı gereklidir. Sanal stop ve hedef 5 saniyede bir kontrol edilir.") : "BOT_ENABLED=false. Yeni paper girişleri kapalı.");
   $("trading-mode").textContent=data.bot_enabled ? "Sanal girişler açık" : "Yeni girişler kapalı";
   $("paper-cash").textContent=money(data.paper_cash_usdt);
   $("wfa-state").textContent=data.wfa_in_progress || "Beklemede";
+  const quick=data.quick_backtests || {};
+  $("quick-count").textContent=`${Object.values(quick).reduce((a,b)=>a+Number(b||0),0)} test · ${quick.PASS||0} olumlu`;
+  const full=data.full_backtests || {};
+  $("full-count").textContent=`${full.DONE||0}/${data.universe_count||0}${data.full_backtest_symbol ? ` · ${data.full_backtest_symbol}` : ""}`;
   $("eligible-count").textContent=data.eligible_count ?? "—";
   $("test-start").textContent=timeText(data.test_start);
   renderDecisions(data.decisions);

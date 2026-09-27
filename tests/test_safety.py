@@ -72,20 +72,21 @@ class SafetyTests(unittest.TestCase):
 
     def test_complete_cycle_holds_without_walk_forward_approval(self):
         now = int(time.time()*1000)
-        base = now - 60*60000
+        base = now - 300*60000
         candles = [{"ts": base+i*60000, "o": 100+i*0.1, "h": 100.2+i*0.1,
                     "l": 99.8+i*0.1, "c": 100+i*0.1, "v": 1000, "confirm": "1"}
-                   for i in range(60)]
+                   for i in range(300)]
         class FakeApi:
             def instruments(self): return {"BTC-USDT-SWAP": {"instId": "BTC-USDT-SWAP"}}
             def server_ms(self): return int(time.time()*1000)
             def tickers(self): return {"BTC-USDT-SWAP": {"volCcy24h": "100000", "last": "100"}}
-            def candles(self, symbol): return candles
+            def candles(self, symbol, limit=300): return candles
             def book(self, symbol): return {"ts": str(int(time.time()*1000)),
                        "bids": [["106", "10"]], "asks": [["106.1", "1"]]}
         with tempfile.TemporaryDirectory() as tmp:
             store = Store(Path(tmp)/"paper.sqlite3")
-            runner = Runner(Config(db=str(Path(tmp)/"paper.sqlite3"), enabled=False), FakeApi(), store)
+            runner = Runner(Config(db=str(Path(tmp)/"paper.sqlite3"), enabled=False,
+                                   allow_pending_wfa=False), FakeApi(), store)
             runner.start_validation = lambda symbol: None
             runner.cycle()
             with store.connect() as db:
@@ -93,6 +94,37 @@ class SafetyTests(unittest.TestCase):
             self.assertEqual(len(decisions), 1)
             self.assertEqual(json.loads(decisions[0][0])["final"]["decision"], "hold")
             self.assertEqual(runner.paper.positions(), [])
+
+    def test_pending_wfa_can_trade_paper_but_rejected_cannot(self):
+        now = int(time.time()*1000)
+        base = now - 300*60000
+        candles = [{"ts": base+i*60000, "o": 100+i*0.1, "h": 100.2+i*0.1,
+                    "l": 99.8+i*0.1, "c": 100+i*0.1, "v": 1000, "confirm": "1"}
+                   for i in range(300)]
+        last = candles[-1]["c"]
+        class FakeApi:
+            def instruments(self): return {"BTC-USDT-SWAP": {"instId": "BTC-USDT-SWAP", "ctVal":"1",
+                                                              "ctValCcy":"BTC", "lotSz":"1", "minSz":"1"}}
+            def server_ms(self): return int(time.time()*1000)
+            def tickers(self): return {"BTC-USDT-SWAP": {"volCcy24h": "100000", "last": str(last)}}
+            def candles(self, symbol, limit=300): return candles
+            def book(self, symbol): return {"ts": str(int(time.time()*1000)),
+                                           "bids": [[str(last-0.01), "10"]],
+                                           "asks": [[str(last), "10"]]}
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(Path(tmp)/"paper.sqlite3")
+            runner = Runner(Config(db=str(Path(tmp)/"paper.sqlite3"), enabled=True), FakeApi(), store)
+            runner.start_validation = lambda symbol: None
+            runner.cycle()
+            self.assertEqual(len(runner.paper.positions()), 1)
+            self.assertEqual(store.dashboard_snapshot()["quick_backtests"]["PASS"], 1)
+            with store.connect() as db:
+                payload = json.loads(db.execute("SELECT payload FROM audit WHERE kind='decision' ORDER BY id DESC LIMIT 1").fetchone()[0])
+            self.assertEqual(payload["final"]["validation_status"], "PENDING_PAPER")
+            weights, status = runner.strategy_weights({"status": "REJECTED", "weights": {}},
+                                                      {"weights": {"trend_momentum": 1.0}})
+            self.assertEqual(weights, {})
+            self.assertEqual(status, "REJECTED")
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .api import OkxClient
-from .backtest import report_30d, validate
+from .backtest import metrics, report_30d, simulate, validate
 from .logic import (data_agent, envelope, final_decision, mean_reversion_agent,
                     news_agent, order_flow_agent, risk_agent, trend_agent, volatility_agent)
 from .paper import PaperBroker
@@ -47,6 +47,8 @@ class Config:
     slippage_bps: float = field(default_factory=lambda: number("PAPER_SLIPPAGE_BPS", 3))
     start_balance: float = field(default_factory=lambda: number("PAPER_START_BALANCE_USDT", 10000))
     test_days: int = field(default_factory=lambda: number("PAPER_TEST_DAYS", 30, int))
+    allow_pending_wfa: bool = field(default_factory=lambda: os.getenv("PAPER_ALLOW_PENDING_WFA", "true").lower() == "true")
+    full_backtest_all: bool = field(default_factory=lambda: os.getenv("FULL_BACKTEST_ALL", "true").lower() == "true")
     stop_pct: float = 0.5
 
     def check(self):
@@ -83,6 +85,35 @@ class Runner:
             self.last_discovery = time.monotonic()
             self.store.audit("universe", {"count": len(self.instruments), "symbols": sorted(self.instruments)})
 
+    def historical_loop(self, runtime=None):
+        """Resumable 30-day research over every discovered USDT perpetual."""
+        while True:
+            symbols = sorted(self.instruments)
+            if not symbols:
+                time.sleep(10)
+                continue
+            for symbol in symbols:
+                cached = self.store.full_backtest(symbol)
+                if cached:
+                    age = time.time() - datetime.fromisoformat(cached["ts"]).timestamp()
+                    if age < (86400 if cached["status"] == "DONE" else 3600):
+                        continue
+                if runtime:
+                    runtime.update(full_backtest_symbol=symbol)
+                try:
+                    report = report_30d(self.api, symbol, self.cfg.fee_bps, self.cfg.slippage_bps)
+                    self.store.save_full_backtest(symbol, report)
+                    log.info("30-day backtest complete: %s", symbol)
+                except Exception as exc:
+                    self.store.save_full_backtest(symbol, {"symbol": symbol, "error": str(exc)})
+                    self.store.audit("full_backtest_error", {"symbol": symbol, "error": str(exc)})
+                    log.exception("30-day backtest failed: %s", symbol)
+                    time.sleep(60)
+                time.sleep(0.25)
+            if runtime:
+                runtime.update(full_backtest_symbol=None)
+            time.sleep(900)
+
     def start_validation(self, symbol):
         record = self.store.validation(symbol)
         if record and time.time() - datetime.fromisoformat(record["ts"]).timestamp() < 86400:
@@ -100,6 +131,31 @@ class Runner:
                 log.exception("WFA failed for %s", symbol)
         self.validation_thread = threading.Thread(target=job, daemon=True)
         self.validation_thread.start()
+
+    def quick_backtest(self, symbol, candles):
+        cached = self.store.quick_backtest(symbol)
+        if cached and time.time() - datetime.fromisoformat(cached["ts"]).timestamp() < 60:
+            return cached["report"]
+        results, weights = {}, {}
+        for name in ("trend_momentum", "mean_reversion"):
+            result = metrics(simulate(candles[:-1], name, self.cfg.fee_bps, self.cfg.slippage_bps))
+            results[name] = result
+            weights[name] = 1.0 if result["trade_count"] >= 1 and result["pnl_usd"] > 0 else 0.0
+        weights["order_flow"] = 0.0
+        report = {"symbol": symbol, "status": "PASS" if any(weights.values()) else "NO_EDGE",
+                  "bars": len(candles)-1, "weights": weights, "strategies": results,
+                  "note": "Short historical screen; not 90-day walk-forward validation."}
+        self.store.save_quick_backtest(symbol, report)
+        return report
+
+    def strategy_weights(self, validation, quick):
+        quick_weights = quick["weights"]
+        if validation and validation["status"] == "APPROVED":
+            weights = {name: min(value, quick_weights.get(name, 0)) for name, value in validation["weights"].items()}
+            return weights, "APPROVED" if any(weights.values()) else "QUICK_NO_EDGE"
+        if validation is None and self.cfg.allow_pending_wfa:
+            return quick_weights, "PENDING_PAPER" if any(quick_weights.values()) else "QUICK_NO_EDGE"
+        return {}, validation["status"] if validation else "PENDING_BLOCKED"
 
     def fast_check(self):
         """Check real public bids/asks for simulated stops every five seconds."""
@@ -154,8 +210,11 @@ class Runner:
         baseline = self.store.baseline(day, equity)
         compatible = [{"instId": p["symbol"], "posSide": p["direction"], "pos": p["qty_base"],
                        "notionalUsd": p["notional_usd"]} for p in positions]
-        symbols = sorted(s for s in self.instruments if s in tickers and
-                         float(tickers[s].get("volCcy24h") or 0) * float(tickers[s].get("last") or 0) >= self.cfg.min_volume)
+        def volume_usdt(symbol):
+            ticker = tickers[symbol]
+            return float(ticker.get("volCcy24h") or 0) * float(ticker.get("last") or 0)
+        symbols = sorted((s for s in self.instruments if s in tickers and volume_usdt(s) >= self.cfg.min_volume),
+                         key=volume_usdt, reverse=True)
         if not symbols:
             raise ValueError("No liquid production USDT perpetual markets found")
         self.eligible_count = len(symbols)
@@ -170,9 +229,10 @@ class Runner:
             self.store.audit("paper_test_complete", self.store.performance(self.cfg.test_days))
         for symbol in batch:
             try:
-                candles = self.api.candles(symbol)
-                if len(candles) < 60:
+                candles = self.api.candles(symbol, limit=300)
+                if len(candles) < 180:
                     continue
+                quick = self.quick_backtest(symbol, candles)
                 trend, mean = trend_agent(candles), mean_reversion_agent(candles)
                 if trend["signal"] == mean["signal"] == "flat":
                     continue
@@ -190,7 +250,7 @@ class Runner:
                 vol, news = volatility_agent(candles), news_agent()
                 self.start_validation(symbol)
                 validation = self.store.validation(symbol)
-                weights = validation["weights"] if validation and validation["status"] == "APPROVED" else {}
+                weights, validation_status = self.strategy_weights(validation, quick)
                 signed = sum((1 if s["signal"] == "long" else -1 if s["signal"] == "short" else 0) *
                              s["strength_0_1"] * weights.get(s["agent_name"], 0) for s in (trend, mean, flow))
                 proposed = "long" if signed > 0 else "short" if signed < 0 else None
@@ -207,11 +267,21 @@ class Runner:
                                           candles[-1]["c"], equity, self.cfg,
                                           any(p["symbol"] == symbol for p in positions))
                 decision["reference_price"] = candles[-1]["c"]
+                decision["validation_status"] = validation_status
+                if decision["decision"] != "hold" and validation_status == "PENDING_PAPER":
+                    decision["rationale_summary"] += "; geçici paper sinyali, WFA bekleniyor"
+                elif decision["decision"] == "hold" and not any(weights.values()) and not risk["veto"]:
+                    decision["rationale_summary"] = ("Kısa geçmiş testinde pozitif sonuç yok" if validation_status == "QUICK_NO_EDGE"
+                                                     else "WFA sonucu bekleniyor" if validation is None else "WFA stratejiyi onaylamadı")
                 messages = [data,
                             *[envelope("layer_3_"+s["agent_name"], "layer_8_final_decision", s) for s in (trend, mean, flow)],
                             envelope("layer_3_volatility", "layer_8_final_decision", vol),
                             envelope("layer_2_news", "layer_8_final_decision", news, "DEGRADED"),
-                            envelope("layer_5_walk_forward", "layer_8_final_decision", validation or {}, "OK" if weights else "DEGRADED"),
+                            envelope("layer_5_walk_forward", "layer_8_final_decision",
+                                     validation or {"status": validation_status, "weights": weights},
+                                     "OK" if validation_status == "APPROVED" else "DEGRADED"),
+                            envelope("layer_4_quick_backtest", "layer_8_final_decision", quick,
+                                     "OK" if quick["status"] == "PASS" else "DEGRADED"),
                             envelope("layer_6_risk", "layer_8_final_decision", risk)]
                 self.store.audit("decision", {"symbol": symbol, "inputs": messages, "final": decision})
                 if decision["decision"] != "hold":
@@ -234,7 +304,8 @@ def dashboard_worker(runtime):
     try:
         cfg = Config()
         cfg.check()
-        runtime.update(bot_enabled=cfg.enabled, test_days=cfg.test_days)
+        runtime.update(bot_enabled=cfg.enabled, test_days=cfg.test_days,
+                       allow_pending_wfa=cfg.allow_pending_wfa)
         volume = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "")
         if cfg.enabled and os.getenv("RAILWAY_ENVIRONMENT") and (not volume or not Path(cfg.db).is_relative_to(Path(volume))):
             runtime.update(state="setup", message="30 günlük kalıcı paper test için Railway Volume bağlayın ve PAPER_DB yolunu volume altında tutun.")
@@ -244,6 +315,8 @@ def dashboard_worker(runtime):
         runtime.store = store
         runtime.update(state="starting", message="Gerçek OKX piyasa verisi bekleniyor.", test_start=runner.test_start)
         threading.Thread(target=runner.fast_loop, daemon=True).start()
+        if cfg.full_backtest_all:
+            threading.Thread(target=runner.historical_loop, args=(runtime,), daemon=True).start()
         while True:
             started = time.monotonic()
             try:
@@ -319,6 +392,8 @@ def main():
     elif args.command == "run":
         runner = Runner(cfg, api, store)
         threading.Thread(target=runner.fast_loop, daemon=True).start()
+        if cfg.full_backtest_all:
+            threading.Thread(target=runner.historical_loop, daemon=True).start()
         while True:
             started = time.monotonic()
             try: runner.cycle()

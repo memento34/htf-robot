@@ -63,9 +63,11 @@ class WebTests(unittest.TestCase):
                 db.execute("INSERT INTO closed_positions VALUES(?,?,?,?,?)",
                            ("close-1", int(now.timestamp()*1000), 25, 60000, "{}"))
             store.audit("universe", {"count": 2, "symbols": ["BTC-USDT-SWAP", "ETH-USDT-SWAP"]})
+            store.save_full_backtest("BTC-USDT-SWAP", {"symbol": "BTC-USDT-SWAP", "bars": 43200})
             snapshot = store.dashboard_snapshot()
             self.assertEqual(snapshot["universe_count"], 2)
             self.assertEqual(snapshot["equity_usd"], 10100)
+            self.assertEqual(snapshot["full_backtests"]["DONE"], 1)
             report = store.performance(30)
             self.assertEqual(report["win_rate_pct"], 100)
             self.assertEqual(report["closed_positions"], 1)

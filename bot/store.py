@@ -32,6 +32,14 @@ class Store:
                     symbol TEXT PRIMARY KEY, ts TEXT NOT NULL, status TEXT NOT NULL,
                     weights TEXT NOT NULL, report TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS quick_backtests (
+                    symbol TEXT PRIMARY KEY, ts TEXT NOT NULL, status TEXT NOT NULL,
+                    report TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS full_backtests (
+                    symbol TEXT PRIMARY KEY, ts TEXT NOT NULL, status TEXT NOT NULL,
+                    report TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS closed_positions (
                     id TEXT PRIMARY KEY, u_time_ms INTEGER NOT NULL, pnl_usd REAL NOT NULL,
@@ -165,6 +173,29 @@ class Store:
             return None
         return {"ts": row[0], "status": row[1], "weights": json.loads(row[2]), "report": json.loads(row[3])}
 
+    def save_quick_backtest(self, symbol, report):
+        ts = datetime.now(timezone.utc).isoformat()
+        with self.connect() as db:
+            db.execute("INSERT OR REPLACE INTO quick_backtests VALUES(?,?,?,?)",
+                       (symbol, ts, report["status"], json.dumps(report, separators=(",", ":"))))
+
+    def quick_backtest(self, symbol):
+        with self.connect() as db:
+            row = db.execute("SELECT ts,status,report FROM quick_backtests WHERE symbol=?", (symbol,)).fetchone()
+        return {"ts": row[0], "status": row[1], "report": json.loads(row[2])} if row else None
+
+    def save_full_backtest(self, symbol, report):
+        ts = datetime.now(timezone.utc).isoformat()
+        status = "ERROR" if "error" in report else "DONE"
+        with self.connect() as db:
+            db.execute("INSERT OR REPLACE INTO full_backtests VALUES(?,?,?,?)",
+                       (symbol, ts, status, json.dumps(report, separators=(",", ":"))))
+
+    def full_backtest(self, symbol):
+        with self.connect() as db:
+            row = db.execute("SELECT ts,status FROM full_backtests WHERE symbol=?", (symbol,)).fetchone()
+        return {"ts": row[0], "status": row[1]} if row else None
+
     def dashboard_snapshot(self):
         """Small read-only snapshot for the password-protected web console."""
         day = datetime.now(timezone.utc).date().isoformat()
@@ -177,6 +208,8 @@ class Store:
             order_rows = db.execute("SELECT ts,kind,payload FROM audit WHERE kind IN ('paper_open','paper_close','order_error') ORDER BY id DESC LIMIT 12").fetchall()
             universe_row = db.execute("SELECT payload FROM audit WHERE kind='universe' ORDER BY id DESC LIMIT 1").fetchone()
             validations = db.execute("SELECT symbol,status,ts FROM validations ORDER BY ts DESC LIMIT 100").fetchall()
+            quick_counts = db.execute("SELECT status,COUNT(*) FROM quick_backtests GROUP BY status").fetchall()
+            full_counts = db.execute("SELECT status,COUNT(*) FROM full_backtests GROUP BY status").fetchall()
             closed = db.execute("SELECT COUNT(*),COALESCE(SUM(pnl_usd),0) FROM closed_positions").fetchone()
             account = db.execute("SELECT initial_usdt,cash_usdt FROM paper_account WHERE id=1").fetchone()
             open_rows = db.execute("SELECT symbol,direction,contracts,entry_price,stop_price,take_price,notional_usd,opened_at FROM paper_positions ORDER BY opened_at").fetchall()
@@ -191,7 +224,8 @@ class Store:
                 row = json.loads(payload)
                 final = row.get("final", {})
                 decisions.append({"ts": ts, "symbol": row.get("symbol"), "decision": final.get("decision"),
-                                  "confidence": final.get("confidence_0_1"), "reason": final.get("rationale_summary")})
+                                  "confidence": final.get("confidence_0_1"), "reason": final.get("rationale_summary"),
+                                  "validation_status": final.get("validation_status")})
             except (ValueError, TypeError):
                 continue
         orders = []
@@ -214,7 +248,8 @@ class Store:
                 "equity_curve": [{"ts": ts, "value": value} for ts, value in reversed(curve)],
                 "decisions": decisions, "orders": orders,
                 "universe_count": universe.get("count", 0), "symbols": universe.get("symbols", []),
-                "validations": [{"symbol": s, "status": status, "ts": ts} for s, status, ts in validations]}
+                "validations": [{"symbol": s, "status": status, "ts": ts} for s, status, ts in validations],
+                "quick_backtests": dict(quick_counts), "full_backtests": dict(full_counts)}
 
     def performance(self, days=30):
         from datetime import timedelta
