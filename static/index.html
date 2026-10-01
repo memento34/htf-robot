@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Astra Paper · Sanal İşlem Masası</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="rail">
+      <div class="brand"><span class="mark">✦</span><div><strong>ASTRA<span>PAPER</span></strong><small>15 dakikalık sanal işlem masası</small></div></div>
+      <div class="side-label">ÇALIŞMA MODU</div>
+      <div class="mode"><span class="dot"></span> SADECE PAPER</div>
+      <p class="side-copy">Bu uygulama gerçek emir göndermez. Fiyatlar açık piyasa verisinden gelir; işlemler yalnızca yerel deftere yazılır.</p>
+      <div class="side-label">STRATEJİ</div>
+      <div class="rule"><span>01</span><div><b>15 dk kapanış</b><small>Yalnızca tamamlanan mumlar</small></div></div>
+      <div class="rule"><span>02</span><div><b>12 / 36 ortalama</b><small>Trend ve fiyat teyidi</small></div></div>
+      <div class="rule"><span>03</span><div><b>Katı risk kapısı</b><small>Stop, günlük kayıp, düşüş sınırı</small></div></div>
+      <div class="rail-bottom"><span>VERİ KAYNAĞI</span><strong>OKX açık swap verisi</strong><small>Hesap veya API anahtarı yok</small></div>
+    </aside>
+    <main>
+      <header class="top"><div><div class="eyebrow">CANLI PİYASA VERİSİ · SANAL İŞLEM</div><h1>İşlem kontrol paneli</h1><p>Botun ne gördüğünü, hangi kuralı uyguladığını ve neden işlem açtığını izle.</p></div><div class="top-right"><span id="connection" class="connection">Bağlanıyor</span><small id="clock">—</small></div></header>
+      <section class="hero"><div><div class="eyebrow">SANAL PORTFÖY</div><div id="equity" class="hero-value">—</div><div id="return" class="hero-sub">Başlangıç bekleniyor</div></div><div class="hero-right"><div><small>NAKİT BAKİYE</small><strong id="cash">—</strong></div><div><small>AÇIK KÂR / ZARAR</small><strong id="unrealized">—</strong></div><div><small>TEPEYE GÖRE DÜŞÜŞ</small><strong id="drawdown">—</strong></div></div></section>
+      <section class="status-line"><div><span class="pulse"></span><b id="engine-status">Motor çalışıyor</b><span>Karar: her tamamlanan 15 dakikalık mum</span></div><div id="last-refresh">Son veri: —</div></section>
+      <section id="error-box" class="error hidden"></section>
+      <section class="grid">
+        <div class="card"><div class="card-head"><div><div class="eyebrow">PİYASA</div><h2>İzlenen sözleşmeler</h2></div><span class="pill">15m</span></div><div id="markets" class="markets empty">Piyasa verisi bekleniyor…</div></div>
+        <div class="card"><div class="card-head"><div><div class="eyebrow">PORTFÖY</div><h2>Açık sanal pozisyonlar</h2></div><span id="position-count" class="pill">0 açık</span></div><div id="positions" class="positions empty">Henüz açık pozisyon yok.</div></div>
+      </section>
+      <section class="card decision-card"><div class="card-head"><div><div class="eyebrow">DENETİM İZİ</div><h2>Botun kararları ve sanal işlemleri</h2><p>Her 15 dakikalık değerlendirme, ret gerekçesi ve sanal dolum burada görünür.</p></div><span id="event-count" class="pill">0 kayıt</span></div><div class="table-wrap"><table><thead><tr><th>ZAMAN (UTC)</th><th>TÜR</th><th>SÖZLEŞME</th><th>KARAR</th><th>FİYAT</th><th>NET K/Z</th><th>GEREKÇE</th></tr></thead><tbody id="events"><tr><td colspan="7" class="empty-cell">İlk değerlendirme bekleniyor…</td></tr></tbody></table></div></section>
+      <section class="footnote">Sanal dolumlar son görülen fiyata varsayımsal kayma ve komisyon ekler. Gerçek emir defteri, fonlama ve likidasyon modellenmez. Sonuçlar canlı işlem performansı değildir.</section>
+    </main>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>
